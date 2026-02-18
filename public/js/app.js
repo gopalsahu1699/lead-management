@@ -82,6 +82,12 @@ class LeadApp {
         const filterStatus = document.getElementById('filter-status');
         if (filterStatus) filterStatus.onchange = () => this.renderLeadsTable();
 
+        const filterOccupation = document.getElementById('filter-occupation');
+        if (filterOccupation) filterOccupation.oninput = () => this.renderLeadsTable();
+
+        const filterCity = document.getElementById('filter-city');
+        if (filterCity) filterCity.oninput = () => this.renderLeadsTable();
+
         // Logout
         document.getElementById('logout-btn').onclick = () => {
             localStorage.clear();
@@ -331,13 +337,18 @@ class LeadApp {
     renderLeadsTable() {
         const query = document.getElementById('search-input')?.value.toLowerCase() || '';
         const statusFilter = document.getElementById('filter-status')?.value || '';
+        const occupationFilter = document.getElementById('filter-occupation')?.value.toLowerCase() || '';
+        const cityFilter = document.getElementById('filter-city')?.value.toLowerCase() || '';
 
         const filtered = this.leads.filter(l => {
             const matchesSearch = l.name.toLowerCase().includes(query) ||
                 (l.email && l.email.toLowerCase().includes(query)) ||
                 (l.phone && l.phone.includes(query));
             const matchesStatus = !statusFilter || l.status === statusFilter;
-            return matchesSearch && matchesStatus;
+            const matchesOccupation = !occupationFilter || (l.occupation && l.occupation.toLowerCase().includes(occupationFilter));
+            const matchesCity = !cityFilter || (l.city && l.city.toLowerCase().includes(cityFilter));
+
+            return matchesSearch && matchesStatus && matchesOccupation && matchesCity;
         });
 
         const tbody = document.getElementById('leads-tbody-premium');
@@ -502,21 +513,48 @@ class LeadApp {
         this.loadLeads();
     }
 
+    getFilteredLeads() {
+        const query = document.getElementById('search-input')?.value.toLowerCase() || '';
+        const statusFilter = document.getElementById('filter-status')?.value || '';
+        const occupationFilter = document.getElementById('filter-occupation')?.value.toLowerCase() || '';
+        const cityFilter = document.getElementById('filter-city')?.value.toLowerCase() || '';
+
+        let filtered = this.leads.filter(l => {
+            const matchesSearch = l.name.toLowerCase().includes(query) ||
+                (l.email && l.email.toLowerCase().includes(query)) ||
+                (l.phone && l.phone.includes(query));
+            const matchesStatus = !statusFilter || l.status === statusFilter;
+            const matchesOccupation = !occupationFilter || (l.occupation && l.occupation.toLowerCase().includes(occupationFilter));
+            const matchesCity = !cityFilter || (l.city && l.city.toLowerCase().includes(cityFilter));
+
+            return matchesSearch && matchesStatus && matchesOccupation && matchesCity;
+        });
+
+        // Apply Range
+        const from = parseInt(document.getElementById('export-from')?.value) || 1;
+        const to = parseInt(document.getElementById('export-to')?.value) || filtered.length;
+
+        return filtered.slice(from - 1, to);
+    }
+
     exportCSV() {
-        if (!this.leads.length) return;
-        const headers = ['Name', 'Email', 'Phone', 'Occupation', 'City', 'State', 'Source', 'Status', 'Created At'];
-        const rows = this.leads.map(l => [
-            l.name, l.email || '', l.phone || '', l.occupation || '', l.city || '', l.state || '', l.source || '', l.status, l.created_at
-        ].map(v => `"${v}"`).join(','));
-        const csvContent = "\uFEFF" + headers.join(',') + "\n" + rows.join('\n');
+        const leadsToExport = this.getFilteredLeads();
+        if (!leadsToExport.length) return alert('No leads to export in this range/filter');
+
+        const headers = ['name', 'number'];
+        const rows = leadsToExport.map(l => [
+            l.name, l.phone || ''
+        ].join(','));
+        const csvContent = headers.join(',') + "\n" + rows.join('\n');
         this.downloadFile(csvContent, 'leads.csv', 'text/csv');
     }
 
     exportExcel() {
-        if (!this.leads.length) return;
-        // Requires xlsx library (script tag in index.html)
+        const leadsToExport = this.getFilteredLeads();
+        if (!leadsToExport.length) return alert('No leads to export in this range/filter');
+
         if (typeof XLSX === 'undefined') return alert('XLSX library not loaded');
-        const data = this.leads.map(l => ({
+        const data = leadsToExport.map(l => ({
             Name: l.name,
             Email: l.email || '',
             Phone: l.phone || '',
