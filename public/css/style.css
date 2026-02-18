@@ -191,32 +191,8 @@ body {
     }
 }
 
-/* Responsive Fixes */
+/* Responsive Fixes - Tailwind now handles most of this */
 @media (max-width: 1024px) {
-    .app-container {
-        grid-template-columns: 1fr;
-    }
-
-    .sidebar {
-        width: 80px;
-        padding: 2rem 0.5rem;
-        align-items: center;
-    }
-
-    .sidebar-logo span,
-    .nav-item span {
-        display: none;
-    }
-
-    .sidebar-nav {
-        align-items: center;
-    }
-
-    .nav-item {
-        justify-content: center;
-        padding: 1rem;
-    }
-
     .main-area {
         padding: 1.5rem;
     }

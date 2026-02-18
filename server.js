@@ -56,7 +56,8 @@ const seedAdmin = async () => {
 const upload = multer({ dest: 'uploads/' });
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(express.static('public'));
 
 // Auth Middleware
@@ -214,7 +215,7 @@ app.post('/api/ai-config', authenticateToken, async (req, res) => {
 });
 
 app.post('/api/leads/ai-clean', authenticateToken, async (req, res) => {
-    const { leads } = req.body;
+    const { leads, mapping } = req.body;
     if (!leads || !Array.isArray(leads)) return res.status(400).json({ message: 'Leads data required' });
 
     try {
@@ -222,21 +223,49 @@ app.post('/api/leads/ai-clean', authenticateToken, async (req, res) => {
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
         const prompt = `
-            You are a Data Cleaning Expert. I will provide a JSON array of lead data.
-            ${config?.systemInstructions || 'Clean and normalize the data according to these rules:'}
-            1. Normalize "name" to proper Title Case (e.g., "gopal k" -> "Gopal K").
-            2. Extract "name" from "email" if "name" is missing or look like test data.
-            3. Standardize "phone" to a clean numeric string with country code if possible.
-            4. Detect "junk" or "test" entries (e.g., "test@test.com", "asdfgh") and mark them by adding a "isJunk: true" property.
-            5. Ensure "city" and "state" are properly capitalized.
-            6. Normalize "occupation" if present (e.g., "ARCHITECT" -> "Architect").
-            
+            You are a Professional Data Extraction AI. 
+            Your task is to extract structured data from the provided JSON array of lead data.
+            The data may contain raw, messy, or unstructured entries.
+
+            IDENTIFY AND EXTRACT these fields for each entry:
+            1. "name": The business or person's name. 
+               - **NOISE REMOVAL**: Strip ratings (e.g., "4.5", "5.0") and review counts (e.g., "(123)") from the name.
+               - Example: "Raipur Bu - Real esta 4.5" -> "Raipur Bu".
+            2. "phone": The most valid Indian mobile number.
+               - **PURITY**: Extract ONLY numbers. Strip leading 0. Format as 91 + 10 digits.
+               - **IGNORE**: "3+ years", "10+ years", "years in business", "Opens 7", "Closes 8".
+            3. "address": The full street address. Include Plus Codes (XXXX+YYY) and areas (e.g., "Piyush Nagar") here.
+            4. "occupation": The profession or business type.
+            5. "city": Specific city name (TEXT ONLY).
+            6. "state": State name (TEXT ONLY).
+
+            ${mapping ? `CRITICAL REFERENCE: The user has manually mapped columns to the following fields:
+            ${JSON.stringify(mapping, null, 2)}
+            Use these as your primary extraction source.` : ''}
+
+            GOOGLE MAPS LINK RULES:
+            - Decode '/maps/dir/' or '/maps/place/' URLs to recover missing Business Names or Addresses.
+            - URLs belong in the "location" field, NEVER in "city" or "state".
+
+            CLEANING & NORMALIZATION RULES:
+            - **COLUMN NOISE**: Values like "7J2H+HR8 Jai Durga..." contain 'PlusCode + Name'. Move '7J2H + HR8' to address and 'Jai Durga' to name IF the name field is otherwise messy.
+            - **SEPARATOR HANDLING**: Use dots (·), pipes (|), and dashes (-) as clues to separate fields, but remove them from the final cleaned values.
+            - Convert all text to Proper Case format.
+            - If a field is missing, try to infer it from the address text or URL.
+            - Mark "junk" or "test" entries with "isJunk: true".
+
+            RULES:
+            - Do not hallucinate data. Do not guess phone numbers.
+            - Only extract what is available.
+            - Ensure no field contains merged data.
+
+            ${config?.systemInstructions || ''}
             ${config?.customRules ? `ADDITIONAL USER RULES:\n${config.customRules}` : ''}
             ${config?.examples ? `EXAMPLES (Messy -> Clean):\n${config.examples}` : ''}
 
-            Return ONLY the cleaned JSON array. No explanations.
+            Return ONLY the extracted and cleaned JSON array with these keys: name, phone, email, address, occupation, city, state, source, location, isJunk.
             
-            Data to clean: ${JSON.stringify(leads)}
+            Data to process: ${JSON.stringify(leads)}
         `;
 
         const result = await model.generateContent(prompt);
@@ -347,6 +376,15 @@ app.post('/api/templates', authenticateToken, authorizeRole('Admin'), async (req
 app.delete('/api/templates/:id', authenticateToken, authorizeRole('Admin'), async (req, res) => {
     await EmailTemplate.findByIdAndDelete(req.params.id);
     res.json({ message: 'Template deleted' });
+});
+
+// Global JSON Error Handler
+app.use((err, req, res, next) => {
+    console.error('Unhandled Error:', err);
+    res.status(err.status || 500).json({
+        message: err.message || 'Internal Server Error',
+        error: process.env.NODE_ENV === 'development' ? err : {}
+    });
 });
 
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

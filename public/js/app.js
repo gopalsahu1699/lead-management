@@ -67,11 +67,34 @@ class LeadApp {
         };
 
         // Navigation
+        const sidebar = document.getElementById('sidebar');
+        const overlay = document.getElementById('sidebar-overlay');
+        const openBtn = document.getElementById('open-sidebar');
+        const closeBtn = document.getElementById('close-sidebar');
+
+        const toggleSidebar = (show) => {
+            if (!sidebar || !overlay) return;
+            if (show) {
+                sidebar.classList.remove('-translate-x-full');
+                overlay.classList.remove('hidden');
+                document.body.style.overflow = 'hidden';
+            } else {
+                sidebar.classList.add('-translate-x-full');
+                overlay.classList.add('hidden');
+                document.body.style.overflow = '';
+            }
+        };
+
+        if (openBtn) openBtn.onclick = () => toggleSidebar(true);
+        if (closeBtn) closeBtn.onclick = () => toggleSidebar(false);
+        if (overlay) overlay.onclick = () => toggleSidebar(false);
+
         document.querySelectorAll('.nav-item').forEach(link => {
             link.onclick = (e) => {
                 e.preventDefault();
                 const view = e.currentTarget.dataset.view;
                 this.loadView(view);
+                if (window.innerWidth < 1024) toggleSidebar(false);
             };
         });
 
@@ -169,15 +192,27 @@ class LeadApp {
 
         try {
             const res = await fetch(url, mergedOptions);
+
             if (res.status === 401 || res.status === 403) {
                 localStorage.clear();
                 location.reload();
                 return;
             }
-            return await res.json();
+
+            const contentType = res.headers.get('content-type');
+            if (contentType && contentType.includes('application/json')) {
+                return await res.json();
+            } else {
+                const text = await res.text();
+                console.error('Non-JSON Response:', text);
+                return {
+                    error: true,
+                    message: `Server returned ${res.status} (${res.statusText}). Expected JSON but got ${contentType || 'unknown'}.`
+                };
+            }
         } catch (err) {
             console.error('API Error:', err);
-            return { error: true, message: err.message };
+            return { error: true, message: `Network Error: ${err.message}` };
         }
     }
 
@@ -644,13 +679,14 @@ class LeadApp {
         const headers = Object.keys(this.uploadedData[0]);
         const fields = [
             { id: 'name', label: 'Name *', search: ['name', 'full name', 'customer', 'lead', 'person'] },
-            { id: 'phone', label: 'Phone', search: ['phone', 'mobile', 'contact', 'tel', 'number'] },
+            { id: 'phone', label: 'Phone', search: ['phone', 'number', 'mobile', 'contact', 'tel'] },
             { id: 'email', label: 'Email', search: ['email', 'mail', 'e-mail'] },
+            { id: 'occupation', label: 'Occupation', search: ['occupation', 'profession', 'job', 'work', 'architect', 'builder', 'profession'] },
             { id: 'address', label: 'Address', search: ['address', 'street', 'location', 'addr'] },
             { id: 'city', label: 'City', search: ['city', 'town'] },
             { id: 'state', label: 'State', search: ['state', 'province', 'region'] },
-            { id: 'occupation', label: 'Occupation', search: ['occupation', 'profession', 'job', 'work', 'architect', 'builder'] },
-            { id: 'source', label: 'Source', search: ['source', 'origin', 'medium', 'website'] }
+            { id: 'source', label: 'Source', search: ['source', 'origin', 'medium', 'website'] },
+            { id: 'location', label: 'Location URL', search: ['location', 'map', 'directions', 'url', 'link'] }
         ];
 
         container.innerHTML = fields.map(field => {
@@ -719,16 +755,50 @@ class LeadApp {
 
         btn.disabled = true;
         const originalText = btn.innerText;
-        btn.innerText = 'Importing Data...';
+        btn.innerText = 'Initializing Import...';
 
-        // Strict Transformation: Save ONLY mapped fields and skip junk
-        const transformedData = this.uploadedData
-            .filter(row => !row.isJunk) // AI Junk Filter
-            .map(row => {
-                const lead = {
-                    status: 'New',
-                    source: 'Bulk Import'
-                };
+        let dataToSave = [];
+
+        // Check for AI Deep Clean Toggle
+        const aiToggle = document.getElementById('ai-clean-toggle');
+        if (aiToggle && aiToggle.checked) {
+            const batchSize = 15;
+            const total = this.uploadedData.length;
+
+            try {
+                for (let i = 0; i < total; i += batchSize) {
+                    const batch = this.uploadedData.slice(i, i + batchSize);
+                    btn.innerHTML = `<i class="fa-solid fa-robot animate-pulse mr-2"></i> AI Cleaning ${i}/${total}...`;
+
+                    const cleaned = await this.api('/leads/ai-clean', {
+                        method: 'POST',
+                        body: JSON.stringify({ leads: batch, mapping })
+                    });
+
+                    if (cleaned && !cleaned.error) {
+                        dataToSave.push(...cleaned);
+                    } else {
+                        // Fallback to manual mapping if AI fails for a batch
+                        const fallbackBatch = batch.map(row => {
+                            const lead = { status: 'New', source: 'Bulk Import' };
+                            Object.keys(mapping).forEach(field => {
+                                const val = row[mapping[field]];
+                                if (val !== undefined && val !== null) lead[field] = String(val).trim();
+                            });
+                            return lead;
+                        });
+                        dataToSave.push(...fallbackBatch);
+                    }
+                }
+            } catch (err) {
+                console.warn('AI Deep Clean failed, falling back to manual mapping', err);
+            }
+        }
+
+        // If AI wasn't used or failed entirely, perform standard manual mapping
+        if (dataToSave.length === 0) {
+            dataToSave = this.uploadedData.map(row => {
+                const lead = { status: 'New', source: 'Bulk Import' };
                 Object.keys(mapping).forEach(field => {
                     const value = row[mapping[field]];
                     if (value !== undefined && value !== null) {
@@ -737,9 +807,12 @@ class LeadApp {
                 });
                 return lead;
             });
+        }
 
-        // Filter out rows where name is empty after transformation
-        const validLeads = transformedData.filter(l => l.name);
+        btn.innerText = 'Saving to CRM...';
+
+        // Filter out rows where name is empty
+        const validLeads = dataToSave.filter(l => l.name && !l.isJunk);
 
         const res = await this.api('/leads/bulk-insert', {
             method: 'POST',
