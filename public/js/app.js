@@ -783,7 +783,16 @@ class LeadApp {
                             const lead = { status: 'New', source: 'Bulk Import' };
                             Object.keys(mapping).forEach(field => {
                                 const val = row[mapping[field]];
-                                if (val !== undefined && val !== null) lead[field] = String(val).trim();
+                                if (val !== undefined && val !== null) {
+                                    const strVal = String(val).trim();
+                                    lead[field] = strVal;
+
+                                    // Basic Junk Detection for Fallback
+                                    const junkWords = ['no review', 'unit no', 'opposite', 'piru-2', 'test entry'];
+                                    if (field === 'name' && junkWords.some(j => strVal.toLowerCase().includes(j))) {
+                                        lead.isJunk = true;
+                                    }
+                                }
                             });
                             return lead;
                         });
@@ -811,8 +820,12 @@ class LeadApp {
 
         btn.innerText = 'Saving to CRM...';
 
-        // Filter out rows where name is empty
-        const validLeads = dataToSave.filter(l => l.name && !l.isJunk);
+        // Filter out rows where name is empty or marked as junk
+        const validLeads = dataToSave.filter(l => {
+            const hasName = l.name && l.name.trim().length > 1;
+            const isJunk = l.isJunk === true || String(l.isJunk).toLowerCase() === 'true';
+            return hasName && !isJunk;
+        });
 
         const res = await this.api('/leads/bulk-insert', {
             method: 'POST',

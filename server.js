@@ -9,8 +9,14 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const { scrapeLeads } = require('./scraper');
 const { sendAutomatedEmail } = require('./email-service');
-const { GoogleGenerativeAI } = require("@google/generative-ai");
+const OpenAI = require('openai');
 require('dotenv').config();
+
+// AI Setup (NVIDIA NIM)
+const openai = new OpenAI({
+    apiKey: process.env.NVIDIA_API_KEY,
+    baseURL: 'https://integrate.api.nvidia.com/v1'
+});
 
 // Models
 const User = require('./models/User');
@@ -189,7 +195,7 @@ app.post('/api/leads/bulk-insert', authenticateToken, async (req, res) => {
 });
 
 // AI Logic
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
 
 app.get('/api/ai-config', authenticateToken, async (req, res) => {
     try {
@@ -220,7 +226,6 @@ app.post('/api/leads/ai-clean', authenticateToken, async (req, res) => {
 
     try {
         const config = await AIConfig.findOne({ type: 'import_cleaner' });
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
         const prompt = `
             You are a Professional Data Extraction AI. 
@@ -229,48 +234,57 @@ app.post('/api/leads/ai-clean', authenticateToken, async (req, res) => {
 
             IDENTIFY AND EXTRACT these fields for each entry:
             1. "name": The business or person's name. 
-               - **NOISE REMOVAL**: Strip ratings (e.g., "4.5", "5.0") and review counts (e.g., "(123)") from the name.
+               - **NOISE REMOVAL**: Strip ratings (e.g., "4.5"), counts (e.g., "(123)"), and business years.
                - Example: "Raipur Bu - Real esta 4.5" -> "Raipur Bu".
             2. "phone": The most valid Indian mobile number.
-               - **PURITY**: Extract ONLY numbers. Strip leading 0. Format as 91 + 10 digits.
-               - **IGNORE**: "3+ years", "10+ years", "years in business", "Opens 7", "Closes 8".
-            3. "address": The full street address. Include Plus Codes (XXXX+YYY) and areas (e.g., "Piyush Nagar") here.
+               - **PURITY**: Extract ONLY 10 digits. Strip '0', '+91', and spaces. Output as 91 + 10 digits.
+               - **STRIP**: Remove all address parts or Plus Codes from this field.
+            3. "address": The full street address. Include Plus Codes here.
             4. "occupation": The profession or business type.
             5. "city": Specific city name (TEXT ONLY).
             6. "state": State name (TEXT ONLY).
+
+            GOOGLE MAPS LINK RULES:
+            - Decode '/maps/dir/' or '/maps/place/' URLs for Business Names or Addresses.
+            - URLs belong ONLY in the "location" field.
 
             ${mapping ? `CRITICAL REFERENCE: The user has manually mapped columns to the following fields:
             ${JSON.stringify(mapping, null, 2)}
             Use these as your primary extraction source.` : ''}
 
-            GOOGLE MAPS LINK RULES:
-            - Decode '/maps/dir/' or '/maps/place/' URLs to recover missing Business Names or Addresses.
-            - URLs belong in the "location" field, NEVER in "city" or "state".
+            JUNK FILTERING (Mark with "isJunk: true"):
+            - Entries with NO valid phone number AND no business name.
+            - Entries that are just business hours or closing times (e.g., "Closes 8:00 PM").
+            - Entries that look like generic placeholders (e.g., "No review", "Unit no", "Opposite", "Piru-2").
+            - Entries where the 'name' is just a profession without a specific business name.
+            - Duplicate entries in the same batch.
 
             CLEANING & NORMALIZATION RULES:
-            - **COLUMN NOISE**: Values like "7J2H+HR8 Jai Durga..." contain 'PlusCode + Name'. Move '7J2H + HR8' to address and 'Jai Durga' to name IF the name field is otherwise messy.
-            - **SEPARATOR HANDLING**: Use dots (·), pipes (|), and dashes (-) as clues to separate fields, but remove them from the final cleaned values.
+            - **COLUMN NOISE**: Values like "7J2H+HR8 Jai Durga..." contain 'PlusCode + Name'. Separate them.
+            - Use dots (·), pipes (|), and dashes (-) as clues to separate fields.
             - Convert all text to Proper Case format.
-            - If a field is missing, try to infer it from the address text or URL.
-            - Mark "junk" or "test" entries with "isJunk: true".
-
-            RULES:
-            - Do not hallucinate data. Do not guess phone numbers.
-            - Only extract what is available.
-            - Ensure no field contains merged data.
+            - If a field is missing, try to infer it. If impossible, return "".
 
             ${config?.systemInstructions || ''}
             ${config?.customRules ? `ADDITIONAL USER RULES:\n${config.customRules}` : ''}
             ${config?.examples ? `EXAMPLES (Messy -> Clean):\n${config.examples}` : ''}
 
-            Return ONLY the extracted and cleaned JSON array with these keys: name, phone, email, address, occupation, city, state, source, location, isJunk.
+            RULES:
+            - Do not hallucinate. Do not guess numbers.
+            - Return ONLY the extracted and cleaned JSON array with these keys: name, phone, email, address, occupation, city, state, source, location, isJunk.
             
             Data to process: ${JSON.stringify(leads)}
         `;
 
-        const result = await model.generateContent(prompt);
-        const response = await result.response;
-        const text = response.text();
+        const completion = await openai.chat.completions.create({
+            model: "meta/llama-3.1-70b-instruct",
+            messages: [{ role: "user", content: prompt }],
+            temperature: 0.1,
+            top_p: 1,
+            max_tokens: 4096,
+        });
+
+        const text = completion.choices[0]?.message?.content || "";
 
         // Extract JSON using regex in case model adds markdown formatting
         const jsonMatch = text.match(/\[.*\]/s);
