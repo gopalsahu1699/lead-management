@@ -1,12 +1,5 @@
 class LeadApp {
     constructor() {
-        this.token = localStorage.getItem('token');
-        try {
-            this.user = JSON.parse(localStorage.getItem('user') || '{}');
-            if (!this.user) this.user = {};
-        } catch (e) {
-            this.user = {};
-        }
         this.view = 'dashboard';
         this.leads = [];
         this.charts = {};
@@ -19,16 +12,7 @@ class LeadApp {
 
     init() {
         console.log('Initializing App...');
-        if (!this.token) {
-            const auth = document.getElementById('auth-overlay');
-            if (auth) auth.classList.remove('hidden');
-        } else {
-            const auth = document.getElementById('auth-overlay');
-            if (auth) auth.classList.add('hidden');
-            this.updateUserUI();
-            this.loadView('dashboard');
-        }
-
+        this.loadView('dashboard');
         this.bindEvents();
         this.updateDate();
     }
@@ -40,32 +24,7 @@ class LeadApp {
         el.innerText = new Date().toLocaleDateString('en-US', options);
     }
 
-    updateUserUI() {
-        if (this.user && this.user.username) {
-            const badge = document.getElementById('user-badge');
-            const nameEl = document.getElementById('user-name');
-            const initEl = document.getElementById('user-initials');
-
-            if (badge) badge.classList.remove('hidden');
-            if (nameEl) nameEl.innerText = this.user.username;
-            if (initEl) initEl.innerText = this.user.username[0].toUpperCase();
-
-            if (this.user.role === 'Admin') {
-                const adminLinks = document.getElementById('admin-links');
-                if (adminLinks) adminLinks.classList.remove('hidden');
-            }
-        }
-    }
-
     bindEvents() {
-        // Auth
-        document.getElementById('login-form').onsubmit = async (e) => {
-            e.preventDefault();
-            const username = document.getElementById('username').value;
-            const password = document.getElementById('password').value;
-            await this.login(username, password);
-        };
-
         // Navigation
         const sidebar = document.getElementById('sidebar');
         const overlay = document.getElementById('sidebar-overlay');
@@ -108,14 +67,8 @@ class LeadApp {
         const filterOccupation = document.getElementById('filter-occupation');
         if (filterOccupation) filterOccupation.oninput = () => this.renderLeadsTable();
 
-        const filterCity = document.getElementById('filter-city');
-        if (filterCity) filterCity.oninput = () => this.renderLeadsTable();
-
-        // Logout
-        document.getElementById('logout-btn').onclick = () => {
-            localStorage.clear();
-            location.reload();
-        };
+        const filterLocation = document.getElementById('filter-location');
+        if (filterLocation) filterLocation.oninput = () => this.renderLeadsTable();
 
         // Lead Form
         const addLeadForm = document.getElementById('add-lead-form');
@@ -127,19 +80,6 @@ class LeadApp {
                 await this.api('/leads', { method: 'POST', body: JSON.stringify(body) });
                 this.closeAddLeadModal();
                 this.loadLeads();
-                e.target.reset();
-            };
-        }
-
-        // User Form
-        const addUserForm = document.getElementById('add-user-form');
-        if (addUserForm) {
-            addUserForm.onsubmit = async (e) => {
-                e.preventDefault();
-                const formData = new FormData(e.target);
-                await this.api('/users', { method: 'POST', body: JSON.stringify(Object.fromEntries(formData.entries())) });
-                this.closeAddUserModal();
-                this.loadUsers();
                 e.target.reset();
             };
         }
@@ -175,7 +115,6 @@ class LeadApp {
     async api(endpoint, options = {}) {
         const url = `/api${endpoint}`;
         const defaultHeaders = {
-            'Authorization': `Bearer ${this.token}`,
             'Content-Type': 'application/json'
         };
 
@@ -193,12 +132,6 @@ class LeadApp {
         try {
             const res = await fetch(url, mergedOptions);
 
-            if (res.status === 401 || res.status === 403) {
-                localStorage.clear();
-                location.reload();
-                return;
-            }
-
             const contentType = res.headers.get('content-type');
             if (contentType && contentType.includes('application/json')) {
                 return await res.json();
@@ -213,22 +146,6 @@ class LeadApp {
         } catch (err) {
             console.error('API Error:', err);
             return { error: true, message: `Network Error: ${err.message}` };
-        }
-    }
-
-    async login(username, password) {
-        const res = await fetch('/api/login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, password })
-        });
-        const data = await res.json();
-        if (data.token) {
-            localStorage.setItem('token', data.token);
-            localStorage.setItem('user', JSON.stringify(data.user));
-            location.reload();
-        } else {
-            alert(data.message || 'Login failed');
         }
     }
 
@@ -249,7 +166,6 @@ class LeadApp {
             'leads': ['Lead Manager', 'Direct actions on your pipeline'],
             'scraper': ['Discovery Tool', 'Real-time prospective data'],
             'upload': ['Import Center', 'Bulk spreadsheet processing'],
-            'team': ['Team Roles', 'Permissions and access control'],
             'automation': ['Automation', 'Intelligent messaging triggers'],
             'ai-training': ['AI Training Center', 'Configure Gemini behavior for data import']
         };
@@ -261,7 +177,6 @@ class LeadApp {
 
         if (view === 'dashboard') this.loadDashboard();
         if (view === 'leads') this.loadLeads();
-        if (view === 'team') this.loadUsers();
         if (view === 'automation') this.loadTemplates();
         if (view === 'ai-training') this.loadAIConfig();
 
@@ -373,7 +288,7 @@ class LeadApp {
         const query = document.getElementById('search-input')?.value.toLowerCase() || '';
         const statusFilter = document.getElementById('filter-status')?.value || '';
         const occupationFilter = document.getElementById('filter-occupation')?.value.toLowerCase() || '';
-        const cityFilter = document.getElementById('filter-city')?.value.toLowerCase() || '';
+        const locationFilter = document.getElementById('filter-location')?.value.toLowerCase() || '';
 
         const filtered = this.leads.filter(l => {
             const matchesSearch = l.name.toLowerCase().includes(query) ||
@@ -381,18 +296,24 @@ class LeadApp {
                 (l.phone && l.phone.includes(query));
             const matchesStatus = !statusFilter || l.status === statusFilter;
             const matchesOccupation = !occupationFilter || (l.occupation && l.occupation.toLowerCase().includes(occupationFilter));
-            const matchesCity = !cityFilter || (l.city && l.city.toLowerCase().includes(cityFilter));
+            const matchesLocation = !locationFilter || 
+                (l.city && l.city.toLowerCase().includes(locationFilter)) ||
+                (l.state && l.state.toLowerCase().includes(locationFilter)) ||
+                (l.address && l.address.toLowerCase().includes(locationFilter));
 
-            return matchesSearch && matchesStatus && matchesOccupation && matchesCity;
+            return matchesSearch && matchesStatus && matchesOccupation && matchesLocation;
         });
 
         const tbody = document.getElementById('leads-tbody-premium');
         if (!tbody) return;
 
-        tbody.innerHTML = filtered.map(l => `
+        tbody.innerHTML = filtered.map((l, index) => `
             <tr class="group hover:bg-slate-50/50 transition-all border-b border-transparent hover:border-slate-100">
                 <td class="p-6">
                     <input type="checkbox" class="lead-checkbox w-5 h-5 rounded-lg border-slate-200 text-indigo-600 cursor-pointer" data-id="${l._id}">
+                </td>
+                <td class="p-6 text-sm font-bold text-slate-500">
+                    ${index + 1}
                 </td>
                 <td class="p-6 cursor-pointer" onclick="window.app.viewLead('${l._id}')">
                     <div class="flex items-center gap-4">
@@ -522,9 +443,6 @@ class LeadApp {
     showAddLeadModal() { this.showModal('add-lead-modal'); }
     closeAddLeadModal() { this.closeModal('add-lead-modal'); }
 
-    showAddUserModal() { this.showModal('add-user-modal'); }
-    closeAddUserModal() { this.closeModal('add-user-modal'); }
-
     showAddTemplateModal() { this.showModal('add-template-modal'); }
     closeAddTemplateModal() { this.closeModal('add-template-modal'); }
 
@@ -552,7 +470,7 @@ class LeadApp {
         const query = document.getElementById('search-input')?.value.toLowerCase() || '';
         const statusFilter = document.getElementById('filter-status')?.value || '';
         const occupationFilter = document.getElementById('filter-occupation')?.value.toLowerCase() || '';
-        const cityFilter = document.getElementById('filter-city')?.value.toLowerCase() || '';
+        const locationFilter = document.getElementById('filter-location')?.value.toLowerCase() || '';
 
         let filtered = this.leads.filter(l => {
             const matchesSearch = l.name.toLowerCase().includes(query) ||
@@ -560,9 +478,12 @@ class LeadApp {
                 (l.phone && l.phone.includes(query));
             const matchesStatus = !statusFilter || l.status === statusFilter;
             const matchesOccupation = !occupationFilter || (l.occupation && l.occupation.toLowerCase().includes(occupationFilter));
-            const matchesCity = !cityFilter || (l.city && l.city.toLowerCase().includes(cityFilter));
+            const matchesLocation = !locationFilter || 
+                (l.city && l.city.toLowerCase().includes(locationFilter)) ||
+                (l.state && l.state.toLowerCase().includes(locationFilter)) ||
+                (l.address && l.address.toLowerCase().includes(locationFilter));
 
-            return matchesSearch && matchesStatus && matchesOccupation && matchesCity;
+            return matchesSearch && matchesStatus && matchesOccupation && matchesLocation;
         });
 
         // Apply Range
@@ -572,14 +493,36 @@ class LeadApp {
         return filtered.slice(from - 1, to);
     }
 
+        // Helper to prompt user for fields to export
+    getExportFields(defaultFields) {
+        const available = ['name', 'email', 'phone', 'occupation', 'city', 'state', 'source', 'status', 'created_at'];
+        const input = window.prompt('Enter fields to export, separated by commas (e.g., name,phone,city). Available: ' + available.join(', '), defaultFields?.join(', ') || '' );
+        if (!input) return [];
+        const selected = input.split(',').map(f => f.trim().toLowerCase()).filter(f => available.includes(f));
+        if (selected.length === 0) {
+            alert('No valid fields selected. Export cancelled.');
+            return [];
+        }
+        return selected;
+    }
+
     exportCSV() {
         const leadsToExport = this.getFilteredLeads();
         if (!leadsToExport.length) return alert('No leads to export in this range/filter');
 
-        const headers = ['name', 'number'];
-        const rows = leadsToExport.map(l => [
-            l.name, l.phone || ''
-        ].join(','));
+        const fields = this.getExportFields(['name', 'phone']);
+        if (fields.length === 0) return; // user cancelled
+
+        const headers = fields.map(f => {
+            if (f === 'created_at') return 'Created At';
+            return f.charAt(0).toUpperCase() + f.slice(1);
+        });
+        const rows = leadsToExport.map(l => {
+            return fields.map(f => {
+                if (f === 'created_at') return new Date(l.created_at).toLocaleString();
+                return l[f] !== undefined ? l[f] : '';
+            }).join(',');
+        });
         const csvContent = headers.join(',') + "\n" + rows.join('\n');
         this.downloadFile(csvContent, 'leads.csv', 'text/csv');
     }
@@ -587,24 +530,29 @@ class LeadApp {
     exportExcel() {
         const leadsToExport = this.getFilteredLeads();
         if (!leadsToExport.length) return alert('No leads to export in this range/filter');
-
         if (typeof XLSX === 'undefined') return alert('XLSX library not loaded');
-        const data = leadsToExport.map(l => ({
-            Name: l.name,
-            Email: l.email || '',
-            Phone: l.phone || '',
-            Occupation: l.occupation || '',
-            City: l.city || '',
-            State: l.state || '',
-            Source: l.source || '',
-            Status: l.status,
-            'Created At': new Date(l.created_at).toLocaleString()
-        }));
+
+        const fields = this.getExportFields(['name', 'phone']);
+        if (fields.length === 0) return; // user cancelled
+
+        const data = leadsToExport.map(l => {
+            const obj = {};
+            fields.forEach(f => {
+                if (f === 'created_at') {
+                    obj['Created At'] = new Date(l.created_at).toLocaleString();
+                } else {
+                    const header = f.charAt(0).toUpperCase() + f.slice(1);
+                    obj[header] = l[f] !== undefined ? l[f] : '';
+                }
+            });
+            return obj;
+        });
         const ws = XLSX.utils.json_to_sheet(data);
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, "Leads");
         XLSX.writeFile(wb, "Leads_Export.xlsx");
     }
+
 
     downloadFile(content, fileName, mimeType) {
         const blob = new Blob([content], { type: mimeType });
@@ -740,6 +688,9 @@ class LeadApp {
 
         const aiToggle = document.getElementById('ai-clean-toggle');
         if (aiToggle) aiToggle.checked = false;
+
+        const dedupToggle = document.getElementById('dedup-toggle');
+        if (dedupToggle) dedupToggle.checked = true;
     }
 
     async saveUploadedLeads() {
@@ -827,13 +778,21 @@ class LeadApp {
             return hasName && !isJunk;
         });
 
+        const dedupToggle = document.getElementById('dedup-toggle');
+        const skipDuplicates = dedupToggle ? dedupToggle.checked : true;
+
         const res = await this.api('/leads/bulk-insert', {
             method: 'POST',
-            body: JSON.stringify(validLeads)
+            body: JSON.stringify({ leads: validLeads, skipDuplicates })
         });
 
         if (res && !res.error) {
-            btn.innerText = 'Import Successful!';
+            let successText = 'Import Successful!';
+            if (res.skippedCount > 0) {
+                alert(`Import successful!\n\nImported: ${res.insertedCount} leads\nSkipped: ${res.skippedCount} duplicate phone numbers.`);
+                successText = `Imported ${res.insertedCount} (${res.skippedCount} skipped)`;
+            }
+            btn.innerText = successText;
             btn.classList.replace('bg-indigo-600', 'bg-emerald-500');
             setTimeout(() => {
                 this.loadView('leads');
@@ -841,7 +800,7 @@ class LeadApp {
                 btn.disabled = false;
                 btn.innerText = originalText;
                 btn.classList.replace('bg-emerald-500', 'bg-indigo-600');
-            }, 1000);
+            }, 2000);
         } else {
             alert('Import failed: ' + (res?.message || 'Unknown error'));
             btn.disabled = false;
@@ -849,56 +808,7 @@ class LeadApp {
         }
     }
 
-    // Team Management
-    async loadUsers() {
-        const users = await this.api('/users');
-        if (!users || users.error) return;
-        this.renderUsersTable(users);
-    }
 
-    renderUsersTable(users) {
-        const view = document.getElementById('view-team');
-        if (!view) return;
-
-        view.innerHTML = `
-            <div class="flex items-center justify-between mb-8">
-                <h3 class="text-2xl font-black text-slate-800">System Users</h3>
-                <button onclick="window.app.showAddUserModal()" class="px-8 py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-xl shadow-indigo-100 hover:bg-indigo-700 transition-all">Add Member</button>
-            </div>
-            <div class="card-glass !p-0 overflow-hidden">
-                <table class="w-full text-left">
-                    <thead class="bg-slate-50">
-                        <tr>
-                            <th class="p-6 text-[10px] font-black text-slate-400 uppercase tracking-widest">User Identity</th>
-                            <th class="p-6 text-[10px] font-black text-slate-400 uppercase tracking-widest">Role</th>
-                            <th class="p-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody class="divide-y divide-slate-50">
-                        ${users.map(u => `
-                            <tr>
-                                <td class="p-6 font-bold text-slate-800">${u.username}</td>
-                                <td class="p-6">
-                                    <span class="px-3 py-1 bg-indigo-50 text-indigo-600 rounded-lg text-[10px] font-black uppercase tracking-wider">${u.role}</span>
-                                </td>
-                                <td class="p-6 text-right">
-                                    <button onclick="window.app.deleteUser('${u._id}')" class="w-10 h-10 rounded-xl bg-slate-50 text-rose-400 hover:bg-rose-50 hover:text-rose-600 transition-all">
-                                        <i class="fa-solid fa-trash-can text-sm"></i>
-                                    </button>
-                                </td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
-            </div>
-        `;
-    }
-
-    async deleteUser(id) {
-        if (!confirm('Remove this team member?')) return;
-        await this.api(`/users/${id}`, { method: 'DELETE' });
-        this.loadUsers();
-    }
 
     // Automation
     async loadTemplates() {
@@ -983,7 +893,10 @@ class LeadApp {
             <tr class="hover:bg-slate-50 transition-colors">
                 <td class="p-6 font-bold text-slate-800">${l.name}</td>
                 <td class="p-6"><p class="text-sm font-bold text-indigo-600">${l.phone || '—'}</p></td>
-                <td class="p-6"><p class="text-xs font-semibold text-slate-400">${l.address || '—'}</p></td>
+                <td class="p-6">
+                    <p class="text-sm font-bold text-slate-600">${(l.city && l.state) ? `${l.city}, ${l.state}` : (l.city || l.state || '—')}</p>
+                    <p class="text-xs font-semibold text-slate-400 mt-0.5">${l.address || '—'}</p>
+                </td>
             </tr>
         `).join('');
 
@@ -992,10 +905,19 @@ class LeadApp {
 
     async importScrapedLeads() {
         if (!this.scrapedData.length) return;
-        await this.api('/leads/bulk-insert', {
+        const res = await this.api('/leads/bulk-insert', {
             method: 'POST',
-            body: JSON.stringify(this.scrapedData)
+            body: JSON.stringify({ leads: this.scrapedData, skipDuplicates: true })
         });
+        if (res && !res.error) {
+            if (res.skippedCount > 0) {
+                alert(`Import successful!\n\nImported: ${res.insertedCount} leads\nSkipped: ${res.skippedCount} duplicate phone numbers.`);
+            } else {
+                alert(`Successfully imported ${res.insertedCount} leads.`);
+            }
+        } else {
+            alert('Import failed: ' + (res?.message || 'Unknown error'));
+        }
         this.loadView('leads');
     }
 

@@ -19,39 +19,6 @@
 
 <body>
 
-    <div id="auth-overlay" class="modal-overlay z-[2000] hidden px-4">
-        <div class="bg-white p-8 sm:p-12 rounded-[2.5rem] shadow-2xl w-full max-w-md fade-in transform scale-100">
-            <div class="text-center mb-10">
-                <div
-                    class="w-16 h-16 bg-indigo-600 rounded-2xl flex items-center justify-center text-white text-2xl mx-auto mb-6 shadow-xl shadow-indigo-200">
-                    <i class="fa-solid fa-lock"></i>
-                </div>
-                <h2 class="text-3xl font-extrabold text-slate-900 mb-2">Access Control</h2>
-                <p class="text-slate-500 font-medium">Please sign in to continue</p>
-            </div>
-            <form id="login-form" class="space-y-6">
-                <div>
-                    <label
-                        class="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 pl-1">Username</label>
-                    <input type="text" id="username"
-                        class="w-full px-6 py-4 rounded-2xl bg-slate-50 border-none focus:ring-2 focus:ring-indigo-500/20 font-bold text-slate-700"
-                        required>
-                </div>
-                <div>
-                    <label
-                        class="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 pl-1">Password</label>
-                    <input type="password" id="password"
-                        class="w-full px-6 py-4 rounded-2xl bg-slate-50 border-none focus:ring-2 focus:ring-indigo-500/20 font-bold text-slate-700"
-                        required>
-                </div>
-                <button type="submit"
-                    class="w-full py-5 bg-indigo-600 text-white rounded-2xl font-black text-lg hover:bg-indigo-700 shadow-xl shadow-indigo-600/30 transition-all active:scale-[0.98]">
-                    Login Securely
-                </button>
-            </form>
-        </div>
-    </div>
-
     <div class="app-container min-h-screen bg-slate-50 lg:flex">
         <!-- Overlay for mobile sidebar -->
         <div id="sidebar-overlay" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-40 hidden lg:hidden"></div>
@@ -99,15 +66,9 @@
                         <span>Import Center</span>
                     </a>
 
-                    <div id="admin-links" class="hidden mt-8 pt-8 border-t border-slate-100 space-y-2">
+                    <div class="mt-8 pt-8 border-t border-slate-100 space-y-2">
                         <p class="px-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4">Management
                         </p>
-                        <a href="#"
-                            class="nav-item flex items-center gap-4 px-6 py-4 rounded-2xl text-slate-600 font-bold hover:bg-slate-50 transition-all"
-                            data-view="team">
-                            <i class="fa-solid fa-shield-halved text-lg"></i>
-                            <span>Team Roles</span>
-                        </a>
                         <a href="#"
                             class="nav-item flex items-center gap-4 px-6 py-4 rounded-2xl text-slate-600 font-bold hover:bg-slate-50 transition-all"
                             data-view="automation">
@@ -122,14 +83,6 @@
                         </a>
                     </div>
                 </nav>
-
-                <div class="mt-auto">
-                    <button id="logout-btn"
-                        class="w-full flex items-center gap-4 px-6 py-4 rounded-2xl text-rose-500 hover:bg-rose-50 transition-all font-bold group">
-                        <i class="fa-solid fa-power-off group-hover:rotate-90 transition-transform text-lg"></i>
-                        <span>Logout</span>
-                    </button>
-                </div>
             </div>
         </aside>
 
@@ -151,16 +104,6 @@
                 </div>
 
                 <div class="flex items-center gap-4 sm:gap-6">
-                    <div id="user-badge"
-                        class="hidden flex items-center gap-3 px-4 sm:px-5 py-2 sm:py-2.5 bg-white border border-slate-100 rounded-2xl shadow-sm">
-                        <div class="w-8 h-8 bg-indigo-600 text-white rounded-xl flex items-center justify-center font-black text-xs"
-                            id="user-initials">A</div>
-                        <div class="pr-1 sm:pr-2">
-                            <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">
-                                User</p>
-                            <p class="text-xs font-black text-slate-800 leading-none" id="user-name">Admin</p>
-                        </div>
-                    </div>
                     <div id="current-date"
                         class="px-4 py-2 sm:px-5 sm:py-3 bg-white border border-slate-100 rounded-2xl text-xs sm:text-sm font-bold text-slate-600 shadow-sm">
                     </div>
@@ -268,7 +211,7 @@
                             <div class="flex flex-wrap sm:flex-nowrap gap-3 sm:gap-4">
                                 <input type="text" id="filter-occupation" placeholder="Occupation"
                                     class="flex-1 min-w-[120px] px-4 sm:px-6 py-4 rounded-2xl bg-white border border-slate-200 focus:ring-4 focus:ring-indigo-100 transition-all font-bold text-slate-600 text-sm">
-                                <input type="text" id="filter-city" placeholder="City"
+                                <input type="text" id="filter-location" placeholder="Location"
                                     class="flex-1 min-w-[100px] px-4 sm:px-6 py-4 rounded-2xl bg-white border border-slate-200 focus:ring-4 focus:ring-indigo-100 transition-all font-bold text-slate-600 text-sm">
                                 <select id="filter-status"
                                     class="flex-1 min-w-[130px] px-4 sm:px-6 py-4 rounded-2xl bg-white border border-slate-200 font-bold text-slate-600 text-sm">
@@ -287,6 +230,9 @@
                                     <tr>
                                         <th class="p-6 w-12"><input type="checkbox" id="select-all"
                                                 class="w-5 h-5 rounded-lg border-slate-200 text-indigo-600"></th>
+                                        <th
+                                            class="p-6 text-[10px] font-black text-indigo-400 uppercase tracking-widest w-8">
+                                            #</th>
                                         <th
                                             class="p-6 text-[10px] font-black text-indigo-400 uppercase tracking-widest">
                                             Lead Profile</th>
@@ -373,17 +319,31 @@
                             </button>
                             <input type="file" id="file-input" accept=".xlsx, .csv" class="hidden">
 
-                            <label class="flex items-center gap-4 cursor-pointer group">
-                                <div class="relative">
-                                    <input type="checkbox" id="ai-clean-toggle" class="sr-only peer">
-                                    <div
-                                        class="w-14 h-8 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[4px] after:left-[4px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-indigo-600">
+                            <div class="flex flex-col sm:flex-row items-center gap-6 sm:gap-8 mt-2">
+                                <label class="flex items-center gap-4 cursor-pointer group">
+                                    <div class="relative">
+                                        <input type="checkbox" id="ai-clean-toggle" class="sr-only peer">
+                                        <div
+                                            class="w-14 h-8 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[4px] after:left-[4px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-indigo-600">
+                                        </div>
                                     </div>
-                                </div>
-                                <span
-                                    class="text-sm font-black text-slate-500 uppercase tracking-widest group-hover:text-indigo-600 transition-colors">🚀
-                                    AI Deep Clean (Beta)</span>
-                            </label>
+                                    <span
+                                        class="text-sm font-black text-slate-500 uppercase tracking-widest group-hover:text-indigo-600 transition-colors">🚀
+                                        AI Deep Clean (Beta)</span>
+                                </label>
+
+                                <label class="flex items-center gap-4 cursor-pointer group">
+                                    <div class="relative">
+                                        <input type="checkbox" id="dedup-toggle" class="sr-only peer" checked>
+                                        <div
+                                            class="w-14 h-8 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[4px] after:left-[4px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-indigo-600">
+                                        </div>
+                                    </div>
+                                    <span
+                                        class="text-sm font-black text-slate-500 uppercase tracking-widest group-hover:text-indigo-600 transition-colors">🛡️
+                                        Skip Duplicates</span>
+                                </label>
+                            </div>
                         </div>
                     </div>
 
@@ -421,9 +381,6 @@
                         </button>
                     </div>
                 </section>
-
-                <!-- Team Management -->
-                <section id="view-team" class="view hidden fade-in space-y-8"></section>
 
                 <!-- Automation Management -->
                 <section id="view-automation" class="view hidden fade-in space-y-8"></section>
@@ -592,44 +549,6 @@
                 <button type="submit"
                     class="w-full py-5 bg-indigo-600 text-white rounded-2xl font-black text-lg shadow-xl shadow-indigo-600/20 hover:bg-indigo-700 transition-all">Add
                     to Pipeline</button>
-            </form>
-        </div>
-    </div>
-
-    <!-- Add User Modal -->
-    <div id="add-user-modal" class="modal-overlay hidden z-[600]">
-        <div class="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl overflow-hidden slide-up">
-            <div class="p-8 border-b border-slate-50 flex items-center justify-between">
-                <h3 class="text-xl font-black text-slate-900">Add Team Member</h3>
-                <button onclick="window.app.closeAddUserModal()" class="text-slate-400 hover:text-slate-600">
-                    <i class="fa-solid fa-xmark text-lg"></i>
-                </button>
-            </div>
-            <form id="add-user-form" class="p-8 space-y-6">
-                <div>
-                    <label
-                        class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block ml-1">Username</label>
-                    <input type="text" name="username" required
-                        class="w-full p-4 rounded-xl bg-slate-50 border-none focus:ring-2 focus:ring-indigo-500/20 font-bold text-slate-700">
-                </div>
-                <div>
-                    <label
-                        class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block ml-1">Password</label>
-                    <input type="password" name="password" required
-                        class="w-full p-4 rounded-xl bg-slate-50 border-none focus:ring-2 focus:ring-indigo-500/20 font-bold text-slate-700">
-                </div>
-                <div>
-                    <label
-                        class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block ml-1">Role</label>
-                    <select name="role"
-                        class="w-full p-4 rounded-xl bg-slate-50 border-none focus:ring-2 focus:ring-indigo-500/20 font-bold text-slate-700">
-                        <option value="Member">Member</option>
-                        <option value="Admin">Admin</option>
-                    </select>
-                </div>
-                <button type="submit"
-                    class="w-full py-4 bg-slate-900 text-white rounded-2xl font-black shadow-xl hover:bg-black transition-all">Grant
-                    Access</button>
             </form>
         </div>
     </div>

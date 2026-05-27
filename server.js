@@ -1,16 +1,16 @@
 const express = require('express');
-const mongoose = require('mongoose');
 const multer = require('multer');
 const xlsx = require('xlsx');
 const path = require('path');
 const fs = require('fs');
 const cors = require('cors');
-const jwt = require('jsonwebtoken');
-const bcrypt = require('bcryptjs');
 const { scrapeLeads } = require('./scraper');
 const { sendAutomatedEmail } = require('./email-service');
 const OpenAI = require('openai');
 require('dotenv').config();
+
+// SQLite Database
+const db = require('./db');
 
 // AI Setup (NVIDIA NIM)
 const openai = new OpenAI({
@@ -18,46 +18,11 @@ const openai = new OpenAI({
     baseURL: 'https://integrate.api.nvidia.com/v1'
 });
 
-// Models
-const User = require('./models/User');
-const Lead = require('./models/Lead');
-const EmailTemplate = require('./models/EmailTemplate');
-const AIConfig = require('./models/AIConfig');
-
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// MongoDB Connection
-mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/lead_management')
-    .then(() => {
-        console.log('Connected to MongoDB Atlas');
-        seedAdmin();
-    })
-    .catch(err => console.error('MongoDB connection error:', err));
-
 // Folders
 if (!fs.existsSync('./uploads')) fs.mkdirSync('./uploads');
-
-// Seed Admin
-const seedAdmin = async () => {
-    try {
-        const adminUser = process.env.ADMIN_USERNAME || 'admin';
-        const adminPass = process.env.ADMIN_PASSWORD || 'admin123';
-        const exists = await User.findOne({ username: adminUser });
-
-        if (!exists) {
-            const hash = bcrypt.hashSync(adminPass, 10);
-            await User.create({
-                username: adminUser,
-                password_hash: hash,
-                role: 'Admin'
-            });
-            console.log('Admin user seeded in MongoDB');
-        }
-    } catch (err) {
-        console.error('Seeding error:', err);
-    }
-};
 
 const upload = multer({ dest: 'uploads/' });
 
@@ -66,100 +31,85 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(express.static('public'));
 
-// Auth Middleware
-const authenticateToken = (req, res, next) => {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
-    if (!token) return res.status(401).json({ message: 'Unauthorized' });
-
-    jwt.verify(token, process.env.JWT_SECRET || 'secret', (err, user) => {
-        if (err) return res.status(403).json({ message: 'Forbidden' });
-        req.user = user;
-        next();
-    });
+// Helper: attach notes to a lead object
+const attachNotes = (lead) => {
+    if (!lead) return lead;
+    const notes = db.prepare('SELECT * FROM notes WHERE lead_id = ? ORDER BY created_at ASC').all(lead.id);
+    return { ...lead, _id: lead.id, notes };
 };
-
-const authorizeRole = (role) => {
-    return (req, res, next) => {
-        if (req.user.role !== role) {
-            return res.status(403).json({ message: 'Requires Admin Privileges' });
-        }
-        next();
-    };
-};
-
-// Auth API
-app.post('/api/login', async (req, res) => {
-    const { username, password } = req.body;
-    try {
-        const user = await User.findOne({ username });
-        if (user && bcrypt.compareSync(password, user.password_hash)) {
-            const token = jwt.sign(
-                { id: user._id, username: user.username, role: user.role },
-                process.env.JWT_SECRET || 'secret',
-                { expiresIn: '24h' }
-            );
-            res.json({ token, user: { username: user.username, role: user.role } });
-        } else {
-            res.status(401).json({ message: 'Invalid credentials' });
-        }
-    } catch (err) {
-        res.status(500).json({ message: 'Server error' });
-    }
-});
 
 // Leads Routes
-app.get('/api/leads', authenticateToken, async (req, res) => {
+app.get('/api/leads', (req, res) => {
     try {
-        const leads = await Lead.find().sort({ created_at: -1 });
-        res.json(leads);
+        const leads = db.prepare('SELECT * FROM leads ORDER BY created_at DESC').all();
+        const leadsWithNotes = leads.map(l => attachNotes(l));
+        res.json(leadsWithNotes);
     } catch (err) {
         res.status(500).json({ message: err.message });
     }
 });
 
-app.post('/api/leads', authenticateToken, async (req, res) => {
+app.post('/api/leads', (req, res) => {
     try {
-        const lead = new Lead({ ...req.body, status: req.body.status || 'New' });
-        const savedLead = await lead.save();
-        res.json(savedLead);
+        const { name, phone, email, address, city, state, occupation, source, status, date } = req.body;
+        const result = db.prepare(
+            'INSERT INTO leads (name, phone, email, address, city, state, occupation, source, status, date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        ).run(name, phone || null, email || null, address || null, city || null, state || null, occupation || null, source || null, status || 'New', date || null);
+        const lead = db.prepare('SELECT * FROM leads WHERE id = ?').get(result.lastInsertRowid);
+        res.json(attachNotes(lead));
     } catch (err) {
         res.status(400).json({ message: err.message });
     }
 });
 
-app.put('/api/leads/:id', authenticateToken, async (req, res) => {
+app.put('/api/leads/:id', (req, res) => {
     try {
         const id = req.params.id;
-        const oldLead = await Lead.findById(id);
-        const updatedLead = await Lead.findByIdAndUpdate(id, req.body, { new: true });
+        const oldLead = db.prepare('SELECT * FROM leads WHERE id = ?').get(id);
+        
+        const { name, phone, email, address, city, state, occupation, source, status, date } = req.body;
+        db.prepare(
+            'UPDATE leads SET name=?, phone=?, email=?, address=?, city=?, state=?, occupation=?, source=?, status=?, date=? WHERE id=?'
+        ).run(name, phone || null, email || null, address || null, city || null, state || null, occupation || null, source || null, status || 'New', date || null, id);
 
-        if (oldLead && oldLead.status !== req.body.status) {
-            const template = await EmailTemplate.findOne({ trigger_status: req.body.status });
-            if (template && req.body.email) {
-                sendAutomatedEmail(req.body.email, template, req.body);
-                updatedLead.notes.push({ content: `Automated Email Sent: ${template.name}` });
-                await updatedLead.save();
+        // Check for status change and send automated email
+        if (oldLead && oldLead.status !== status) {
+            const template = db.prepare('SELECT * FROM email_templates WHERE trigger_status = ?').get(status);
+            if (template && email) {
+                sendAutomatedEmail(email, template, req.body);
+                db.prepare('INSERT INTO notes (lead_id, content) VALUES (?, ?)').run(id, `Automated Email Sent: ${template.name}`);
             }
         }
-        res.json(updatedLead);
+
+        const updatedLead = db.prepare('SELECT * FROM leads WHERE id = ?').get(id);
+        res.json(attachNotes(updatedLead));
     } catch (err) {
         res.status(400).json({ message: err.message });
     }
 });
 
-app.delete('/api/leads/bulk', authenticateToken, async (req, res) => {
+app.delete('/api/leads/bulk', (req, res) => {
     try {
-        await Lead.deleteMany({ _id: { $in: req.body.ids } });
+        const ids = req.body.ids;
+        if (!ids || !Array.isArray(ids)) return res.status(400).json({ message: 'IDs required' });
+        const placeholders = ids.map(() => '?').join(',');
+        // Delete leads
+        db.prepare(`DELETE FROM leads WHERE id IN (${placeholders})`).run(...ids);
+        // Delete associated notes
+        db.prepare(`DELETE FROM notes WHERE lead_id IN (${placeholders})`).run(...ids);
         res.json({ message: 'Bulk Deleted' });
     } catch (err) {
         res.status(500).json({ message: err.message });
     }
 });
 
-app.delete('/api/leads/:id', authenticateToken, async (req, res) => {
+app.delete('/api/leads/:id', (req, res) => {
     try {
-        await Lead.findByIdAndDelete(req.params.id);
+        const leadId = req.params.id;
+        // Delete lead record
+        db.prepare('DELETE FROM leads WHERE id = ?').run(leadId);
+        // Delete associated notes
+        db.prepare('DELETE FROM notes WHERE lead_id = ?').run(leadId);
         res.json({ message: 'Deleted' });
     } catch (err) {
         res.status(500).json({ message: err.message });
@@ -167,7 +117,7 @@ app.delete('/api/leads/:id', authenticateToken, async (req, res) => {
 });
 
 // File Upload
-app.post('/api/upload', authenticateToken, upload.single('file'), (req, res) => {
+app.post('/api/upload', upload.single('file'), (req, res) => {
     const filePath = req.file.path;
     const workbook = xlsx.readFile(filePath);
     const sheetName = workbook.SheetNames[0];
@@ -176,56 +126,267 @@ app.post('/api/upload', authenticateToken, upload.single('file'), (req, res) => 
     res.json(data);
 });
 
-app.post('/api/leads/bulk-insert', authenticateToken, async (req, res) => {
+app.post('/api/leads/bulk-insert', (req, res) => {
     try {
-        const leads = req.body;
-        if (!Array.isArray(leads)) return res.status(400).json({ message: 'Invalid data format' });
+        let leads = [];
+        let skipDuplicates = true;
 
-        const formattedLeads = leads.filter(l => l.name).map(l => ({
-            ...l,
-            status: l.status || 'New',
-            date: l.date || new Date().toISOString().split('T')[0]
-        }));
+        if (Array.isArray(req.body)) {
+            leads = req.body;
+        } else if (req.body && Array.isArray(req.body.leads)) {
+            leads = req.body.leads;
+            if (req.body.skipDuplicates !== undefined) {
+                skipDuplicates = !!req.body.skipDuplicates;
+            }
+        } else {
+            return res.status(400).json({ message: 'Invalid data format' });
+        }
 
-        await Lead.insertMany(formattedLeads);
-        res.json({ message: 'Bulk Inserted' });
+        // Helper to normalize phone numbers to a standard format (country code +10 digits)
+        const normalizePhone = (phone) => {
+            if (!phone) return '';
+            const digits = String(phone).replace(/\D/g, '');
+            if (digits.length === 10) return '91' + digits;
+            if (digits.length === 12 && digits.startsWith('91')) return digits;
+            // If longer than 12, take last 10 digits and prepend country code
+            if (digits.length > 12) return '91' + digits.slice(-10);
+            return '';
+        };
+        const existingLeads = db.prepare("SELECT phone FROM leads WHERE phone IS NOT NULL AND phone != ''").all();
+        const existingPhones = new Set(existingLeads.map(l => normalizePhone(l.phone)).filter(Boolean));
+
+        const insert = db.prepare(
+            'INSERT INTO leads (name, phone, email, address, city, state, occupation, source, status, date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        );
+
+        let insertedCount = 0;
+        let skippedCount = 0;
+        const seenInBatch = new Set();
+
+        const insertMany = db.transaction((items) => {
+            for (const l of items) {
+                if (!l.name) continue;
+                
+                // Normalize the phone number for deduplication checks
+                const rawPhone = l.phone ? String(l.phone).trim() : '';
+                const phone = normalizePhone(rawPhone);
+                
+                if (phone && skipDuplicates) {
+                    if (seenInBatch.has(phone) || existingPhones.has(phone)) {
+                        skippedCount++;
+                        continue;
+                    }
+                    seenInBatch.add(phone);
+                } else if (phone) {
+                    seenInBatch.add(phone);
+                }
+
+
+                if (phone) {
+                    // Use normalized phone for insertion
+                    insert.run(
+                        l.name,
+                        phone,
+                        l.email || null,
+                        l.address || null,
+                        l.city || null,
+                        l.state || null,
+                        l.occupation || null,
+                        l.source || null,
+                        l.status || 'New',
+                        l.date || new Date().toISOString().split('T')[0]
+                    );
+                } else {
+                    // Insert without phone if unavailable
+                    insert.run(
+                        l.name,
+                        null,
+                        l.email || null,
+                        l.address || null,
+                        l.city || null,
+                        l.state || null,
+                        l.occupation || null,
+                        l.source || null,
+                        l.status || 'New',
+                        l.date || new Date().toISOString().split('T')[0]
+                    );
+                }
+                insertedCount++;
+            }
+        });
+
+        insertMany(leads);
+        res.json({ message: 'Bulk Inserted', insertedCount, skippedCount });
     } catch (err) {
+        console.error('Bulk Insert Error:', err);
         res.status(500).json({ message: 'Failed to import', error: err.message });
     }
 });
 
 // AI Logic
-
-
-app.get('/api/ai-config', authenticateToken, async (req, res) => {
+app.get('/api/ai-config', (req, res) => {
     try {
-        let config = await AIConfig.findOne({ type: 'import_cleaner' });
-        if (!config) config = await AIConfig.create({ type: 'import_cleaner' });
-        res.json(config);
+        let config = db.prepare("SELECT * FROM ai_config WHERE type = 'import_cleaner'").get();
+        if (!config) {
+            db.prepare("INSERT INTO ai_config (type) VALUES ('import_cleaner')").run();
+            config = db.prepare("SELECT * FROM ai_config WHERE type = 'import_cleaner'").get();
+        }
+        res.json({
+            _id: config.id,
+            type: config.type,
+            systemInstructions: config.system_instructions,
+            customRules: config.custom_rules,
+            examples: config.examples,
+            updated_at: config.updated_at
+        });
     } catch (err) {
         res.status(500).json({ message: err.message });
     }
 });
 
-app.post('/api/ai-config', authenticateToken, async (req, res) => {
+app.post('/api/ai-config', (req, res) => {
     try {
-        const config = await AIConfig.findOneAndUpdate(
-            { type: 'import_cleaner' },
-            { ...req.body, updated_at: Date.now() },
-            { upsert: true, new: true }
-        );
-        res.json(config);
+        const { systemInstructions, customRules, examples } = req.body;
+        let config = db.prepare("SELECT * FROM ai_config WHERE type = 'import_cleaner'").get();
+        if (config) {
+            db.prepare("UPDATE ai_config SET system_instructions=?, custom_rules=?, examples=?, updated_at=CURRENT_TIMESTAMP WHERE type='import_cleaner'")
+                .run(systemInstructions || '', customRules || '', examples || '');
+        } else {
+            db.prepare("INSERT INTO ai_config (type, system_instructions, custom_rules, examples) VALUES ('import_cleaner', ?, ?, ?)")
+                .run(systemInstructions || '', customRules || '', examples || '');
+        }
+        config = db.prepare("SELECT * FROM ai_config WHERE type = 'import_cleaner'").get();
+        res.json({
+            _id: config.id,
+            type: config.type,
+            systemInstructions: config.system_instructions,
+            customRules: config.custom_rules,
+            examples: config.examples,
+            updated_at: config.updated_at
+        });
     } catch (err) {
         res.status(500).json({ message: err.message });
     }
 });
 
-app.post('/api/leads/ai-clean', authenticateToken, async (req, res) => {
+function localCleanLeads(items, mapping) {
+    return items.map(item => {
+        let rawStr = '';
+        if (typeof item === 'string') {
+            rawStr = item;
+        } else if (item && typeof item === 'object') {
+            rawStr = Object.values(item).join(' ');
+        }
+
+        let name = '';
+        let phone = '';
+        let email = '';
+        let address = '';
+        let occupation = '';
+        let city = '';
+        let state = '';
+        let location = '';
+        let isJunk = false;
+
+        if (mapping && typeof item === 'object') {
+            if (mapping.name) name = String(item[mapping.name] || '').trim();
+            if (mapping.phone) phone = String(item[mapping.phone] || '').trim();
+            if (mapping.email) email = String(item[mapping.email] || '').trim();
+            if (mapping.address) address = String(item[mapping.address] || '').trim();
+            if (mapping.occupation) occupation = String(item[mapping.occupation] || '').trim();
+            if (mapping.city) city = String(item[mapping.city] || '').trim();
+            if (mapping.state) state = String(item[mapping.state] || '').trim();
+            if (mapping.location) location = String(item[mapping.location] || '').trim();
+        }
+
+        if (!name && rawStr) {
+            let clean = rawStr
+                .replace(/https?:\/\/\S+/gi, '')
+                .replace(/\b\d\.\d\b/g, '')
+                .replace(/\(\d+\)/g, '')
+                .replace(/\b\d+\+\s*years?\b/gi, '')
+                .replace(/closes?\s+\d+:\d+\s*(?:am|pm)?/gi, '')
+                .replace(/[·|,-]+/g, ' ')
+                .trim();
+            const words = clean.split(/\s+/).slice(0, 4).join(' ');
+            name = words;
+        }
+
+        const combinedPhoneText = phone || rawStr || '';
+        if (combinedPhoneText) {
+            const digits = combinedPhoneText.replace(/\D/g, '');
+            if (digits.length >= 10) {
+                if (digits.length === 12 && digits.startsWith('91')) {
+                    phone = digits;
+                } else {
+                    const last10 = digits.slice(-10);
+                    phone = '91' + last10;
+                }
+            }
+        }
+
+        const emailMatch = (email || rawStr || '').match(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/);
+        if (emailMatch) {
+            email = emailMatch[0];
+        }
+
+        const urlMatch = (location || rawStr || '').match(/https?:\/\/(?:www\.)?(?:google\..*?\/maps|maps\..*?)\S+/i);
+        if (urlMatch) {
+            location = urlMatch[0];
+            // Attempt to extract address from Google Maps place URL if address is empty
+            if (!address) {
+                try {
+                    const decoded = decodeURIComponent(location);
+                    const placeMatch = decoded.match(/\/place\/([^/]+)/i);
+                    if (placeMatch) {
+                        // Replace '+' with space and remove any trailing query parameters
+                        const rawAddress = placeMatch[1].replace(/\+/g, ' ').split('?')[0];
+                        address = rawAddress;
+                    }
+                } catch (e) { /* ignore decoding errors */ }
+            }
+        }
+
+        const toProperCase = (str) => {
+            if (!str) return '';
+            return str.replace(/\b\w+/g, txt => txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase());
+        };
+
+        name = toProperCase(name.trim());
+        occupation = toProperCase(occupation.trim());
+        city = toProperCase(city.trim());
+        state = toProperCase(state.trim());
+        address = toProperCase(address.trim());
+
+        const junkKeywords = ['no review', 'unit no', 'opposite', 'piru-2', 'test entry', 'closes', 'open 24 hours'];
+        const nameLower = name.toLowerCase();
+        if (!name || name.length < 2) {
+            isJunk = true;
+        } else if (junkKeywords.some(keyword => nameLower.includes(keyword))) {
+            isJunk = true;
+        }
+
+        return {
+            name: name || 'Unnamed Lead',
+            phone: phone || '',
+            email: email || '',
+            address: address || '',
+            occupation: occupation || 'Business/Lead',
+            city: city || '',
+            state: state || '',
+            source: 'Local Fallback Cleaner',
+            location: location || '',
+            isJunk
+        };
+    });
+}
+
+app.post('/api/leads/ai-clean', async (req, res) => {
     const { leads, mapping } = req.body;
     if (!leads || !Array.isArray(leads)) return res.status(400).json({ message: 'Leads data required' });
 
     try {
-        const config = await AIConfig.findOne({ type: 'import_cleaner' });
+        const config = db.prepare("SELECT * FROM ai_config WHERE type = 'import_cleaner'").get();
 
         const prompt = `
             You are a Professional Data Extraction AI. 
@@ -247,6 +408,7 @@ app.post('/api/leads/ai-clean', authenticateToken, async (req, res) => {
             GOOGLE MAPS LINK RULES:
             - Decode '/maps/dir/' or '/maps/place/' URLs for Business Names or Addresses.
             - URLs belong ONLY in the "location" field.
+            - **CRITICAL ADDRESS RULE**: If you see a full street address or location details (like "7J2H+HR8 Jai Durga", building names, road names, areas, or land marks) in any fields, extract them into the "address" field. Look for it in raw input fields, and extract it completely. Ensure that the "address" field is NOT left empty when address details are present in the input.
 
             ${mapping ? `CRITICAL REFERENCE: The user has manually mapped columns to the following fields:
             ${JSON.stringify(mapping, null, 2)}
@@ -265,8 +427,8 @@ app.post('/api/leads/ai-clean', authenticateToken, async (req, res) => {
             - Convert all text to Proper Case format.
             - If a field is missing, try to infer it. If impossible, return "".
 
-            ${config?.systemInstructions || ''}
-            ${config?.customRules ? `ADDITIONAL USER RULES:\n${config.customRules}` : ''}
+            ${config?.system_instructions || ''}
+            ${config?.custom_rules ? `ADDITIONAL USER RULES:\n${config.custom_rules}` : ''}
             ${config?.examples ? `EXAMPLES (Messy -> Clean):\n${config.examples}` : ''}
 
             RULES:
@@ -286,20 +448,25 @@ app.post('/api/leads/ai-clean', authenticateToken, async (req, res) => {
 
         const text = completion.choices[0]?.message?.content || "";
 
-        // Extract JSON using regex in case model adds markdown formatting
         const jsonMatch = text.match(/\[.*\]/s);
         if (!jsonMatch) throw new Error('AI failed to return valid JSON');
 
         const cleanedData = JSON.parse(jsonMatch[0]);
         res.json(cleanedData);
     } catch (err) {
-        console.error('AI Cleaning Error:', err);
-        res.status(500).json({ message: 'AI processing failed', error: err.message });
+        console.warn('AI API failed or unauthorized, executing high-fidelity local clean fallback:', err.message);
+        try {
+            const fallbackCleaned = localCleanLeads(leads, mapping);
+            res.json(fallbackCleaned);
+        } catch (fallbackErr) {
+            console.error('Local clean fallback failed:', fallbackErr);
+            res.status(500).json({ message: 'AI processing failed', error: err.message });
+        }
     }
 });
 
 // Scraper
-app.post('/api/scrape', authenticateToken, async (req, res) => {
+app.post('/api/scrape', async (req, res) => {
     const { query } = req.body;
     if (!query) return res.status(400).json({ message: 'Query is required' });
     try {
@@ -311,23 +478,16 @@ app.post('/api/scrape', authenticateToken, async (req, res) => {
 });
 
 // Stats
-app.get('/api/stats', authenticateToken, async (req, res) => {
+app.get('/api/stats', (req, res) => {
     try {
-        const total = await Lead.countDocuments();
-        const leads = await Lead.find();
-
-        const statusCounts = {};
-        const sourceCounts = {};
-
-        leads.forEach(l => {
-            statusCounts[l.status] = (statusCounts[l.status] || 0) + 1;
-            sourceCounts[l.source] = (sourceCounts[l.source] || 0) + 1;
-        });
+        const total = db.prepare('SELECT COUNT(*) as count FROM leads').get().count;
+        const statusCounts = db.prepare('SELECT status, COUNT(*) as count FROM leads GROUP BY status').all();
+        const sourceCounts = db.prepare('SELECT source, COUNT(*) as count FROM leads GROUP BY source').all();
 
         res.json({
             total,
-            statusCounts: Object.entries(statusCounts).map(([status, count]) => ({ status, count })),
-            sourceCounts: Object.entries(sourceCounts).map(([source, count]) => ({ source, count }))
+            statusCounts,
+            sourceCounts
         });
     } catch (err) {
         res.status(500).json({ message: err.message });
@@ -335,60 +495,40 @@ app.get('/api/stats', authenticateToken, async (req, res) => {
 });
 
 // Notes
-app.get('/api/leads/:id/details', authenticateToken, async (req, res) => {
+app.get('/api/leads/:id/details', (req, res) => {
     try {
-        const lead = await Lead.findById(req.params.id);
-        res.json({ lead, notes: lead.notes });
+        const lead = db.prepare('SELECT * FROM leads WHERE id = ?').get(req.params.id);
+        if (!lead) return res.status(404).json({ message: 'Lead not found' });
+        const notes = db.prepare('SELECT * FROM notes WHERE lead_id = ? ORDER BY created_at ASC').all(req.params.id);
+        res.json({ lead: { ...lead, _id: lead.id, notes }, notes });
     } catch (err) {
         res.status(500).json({ message: err.message });
     }
 });
 
-app.post('/api/leads/:id/notes', authenticateToken, async (req, res) => {
+app.post('/api/leads/:id/notes', (req, res) => {
     try {
-        const lead = await Lead.findById(req.params.id);
-        lead.notes.push({ content: req.body.content });
-        await lead.save();
+        db.prepare('INSERT INTO notes (lead_id, content) VALUES (?, ?)').run(req.params.id, req.body.content);
         res.json({ message: 'Note added' });
     } catch (err) {
         res.status(500).json({ message: err.message });
     }
 });
 
-// Management
-app.get('/api/users', authenticateToken, authorizeRole('Admin'), async (req, res) => {
-    const users = await User.find({}, 'username role created_at');
-    res.json(users);
+// Email Templates
+app.get('/api/templates', (req, res) => {
+    const templates = db.prepare('SELECT * FROM email_templates').all();
+    res.json(templates.map(t => ({ ...t, _id: t.id })));
 });
 
-app.post('/api/users', authenticateToken, authorizeRole('Admin'), async (req, res) => {
-    const { username, password, role } = req.body;
-    try {
-        const hash = bcrypt.hashSync(password, 10);
-        await User.create({ username, password_hash: hash, role });
-        res.json({ message: 'User created' });
-    } catch (err) {
-        res.status(400).json({ message: 'User already exists' });
-    }
-});
-
-app.delete('/api/users/:id', authenticateToken, authorizeRole('Admin'), async (req, res) => {
-    await User.findByIdAndDelete(req.params.id);
-    res.json({ message: 'User deleted' });
-});
-
-app.get('/api/templates', authenticateToken, authorizeRole('Admin'), async (req, res) => {
-    const templates = await EmailTemplate.find();
-    res.json(templates);
-});
-
-app.post('/api/templates', authenticateToken, authorizeRole('Admin'), async (req, res) => {
-    await EmailTemplate.create(req.body);
+app.post('/api/templates', (req, res) => {
+    const { name, subject, body, trigger_status } = req.body;
+    db.prepare('INSERT INTO email_templates (name, subject, body, trigger_status) VALUES (?, ?, ?, ?)').run(name, subject, body, trigger_status);
     res.json({ message: 'Template created' });
 });
 
-app.delete('/api/templates/:id', authenticateToken, authorizeRole('Admin'), async (req, res) => {
-    await EmailTemplate.findByIdAndDelete(req.params.id);
+app.delete('/api/templates/:id', (req, res) => {
+    db.prepare('DELETE FROM email_templates WHERE id = ?').run(req.params.id);
     res.json({ message: 'Template deleted' });
 });
 
